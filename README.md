@@ -1,5 +1,8 @@
 # put-test-data-into-S3-bucket
-Put test data into a bucket using boto3.
+A Python3 script that Puts random objects into a bucket using boto3.
+
+To run the script install boto3 and prettytable (used to table the output).
+
 Select the size, amount of versions, how many objects and wait for the bucket to fill up with randomized test data:
 * Enter the bucket name: my-bucket2000
 * Enter the S3 endpoint URL including http// - https://: http://example.com:10444
