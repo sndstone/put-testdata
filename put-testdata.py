@@ -2,6 +2,7 @@ import boto3
 import concurrent.futures
 import os
 import uuid
+from prettytable import PrettyTable
 
 #Asks inputs to run run the script
 BUCKET_NAME = input("Enter the bucket name: ")
@@ -41,5 +42,18 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
     # Use the thread pool to create objects in the bucket
     responses = [response for response in executor.map(create_object, range(OBJECTS_COUNT))]
 
-# Print the responses
-print(responses)
+# Create a table
+table = PrettyTable()
+
+# Add columns to the table
+table.field_names = ["HTTP Status Code", "Request ID", "Host ID", "Version ID"]
+
+# Iterate through the responses and add the information to the table
+for response in responses:
+    table.add_row([str(response['ResponseMetadata']['HTTPStatusCode']),
+                   response['ResponseMetadata']['RequestId'],
+                   response['ResponseMetadata']['HostId'],
+                   response.get("VersionId", "Not provided")])
+
+# Print the table
+print(table)
