@@ -6,7 +6,7 @@ from prettytable import PrettyTable
 
 #Asks inputs to run run the script
 BUCKET_NAME = input("Enter the bucket name: ")
-S3_ENDPOINT_URL = input("Enter the S3 endpoint URL including http// - https://: ")
+S3_ENDPOINT_URL = input("Enter the S3 endpoint URL, (EXAMPLE http://example.com:443): ")
 AWS_ACCESS_KEY_ID = input("Enter the AWS access key ID: ")
 AWS_SECRET_ACCESS_KEY = input("Enter the AWS secret access key: ")
 OBJECT_SIZE = int(input("Enter the size of the objects in bytes: "))
