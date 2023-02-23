@@ -15,6 +15,7 @@ OBJECTS_COUNT = int(input("Enter the number of objects to be placed: "))
 
 # Create an S3 client
 s3 = boto3.client("s3",
+                  verify=False,
                   aws_access_key_id=AWS_ACCESS_KEY_ID,
                   aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
                   endpoint_url=S3_ENDPOINT_URL)
