@@ -1,11 +1,10 @@
 import boto3
-import concurrent.futures
 import os
 import uuid
 from prettytable import PrettyTable
 import json
 import logging
-from threading import Thread, Lock
+from threading import Thread, Lock, local
 from queue import Queue
 import argparse
 import time
@@ -31,6 +30,8 @@ file_logger.addHandler(console_handler)
 log_buffer = []
 log_buffer_lock = Lock()
 LOG_BUFFER_SIZE = 100
+SIMPLE_CONTENT = None
+SIMPLE_CHECKSUM = None
 
 # Function to read credentials from JSON file
 def read_credentials_from_json(file_path):
@@ -247,30 +248,36 @@ def data_generator_thread(data_queue, stop_event, simple_content=None):
         data_queue.put(None)
         print(f"Data generator finished after creating {objects_generated} objects")
 
+thread_local = local()
+
 # Create per-thread S3 client
 def get_s3_client():
-    """Create a new S3 client with optimized configuration"""
-    return boto3.client(
-        "s3",
-        verify=False,
-        aws_access_key_id=AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-        endpoint_url=S3_ENDPOINT_URL,
-        config=boto_config
-    )
+    """Create or reuse a thread-local S3 client with optimized configuration"""
+    if not hasattr(thread_local, "s3_client"):
+        thread_local.s3_client = boto3.client(
+            "s3",
+            verify=False,
+            aws_access_key_id=AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+            endpoint_url=S3_ENDPOINT_URL,
+            config=boto_config
+        )
+    return thread_local.s3_client
 
 # Define a function that creates a single object and its versions in the bucket
-def upload_object(data, q):
+def upload_object(data, q, s3_client, simple_checksum=None):
     try:
         object_key, object_content = data
         if args.debug:
             q.put(f"Processing object key: {object_key}")
-        
-        # Create a thread-local S3 client
-        s3_client = get_s3_client()
-        
+
         # Calculate checksum if needed
-        checksum_value = calculate_checksum(object_content, CHECKSUM_ALGORITHM) if CHECKSUM_ALGORITHM != "none" else None
+        if CHECKSUM_ALGORITHM == "none":
+            checksum_value = None
+        elif simple_checksum is not None and object_content is SIMPLE_CONTENT:
+            checksum_value = simple_checksum
+        else:
+            checksum_value = calculate_checksum(object_content, CHECKSUM_ALGORITHM)
         
         # Prepare extra arguments based on checksum algorithm
         extra_args = {}
@@ -307,24 +314,15 @@ def upload_object(data, q):
         if VERSIONS <= 0:
             return response
             
-        # Create versions of the object in parallel using a nested thread pool
-        version_futures = []
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, VERSIONS)) as version_executor:
-            for _ in range(VERSIONS):
-                version_futures.append(
-                    version_executor.submit(
-                        s3_client.put_object,
-                        Bucket=BUCKET_NAME, 
-                        Key=object_key, 
-                        Body=object_content,
-                        **extra_args
-                    )
-                )
-                
-        # Wait for all versions to complete
-        for future in concurrent.futures.as_completed(version_futures):
+        # Create versions of the object sequentially to avoid per-object thread overhead
+        for _ in range(VERSIONS):
             try:
-                future.result()
+                s3_client.put_object(
+                    Bucket=BUCKET_NAME,
+                    Key=object_key,
+                    Body=object_content,
+                    **extra_args
+                )
             except Exception as e:
                 if args.debug:
                     q.put(f"Error creating version: {e}")
@@ -340,6 +338,7 @@ def upload_object(data, q):
 # Worker function that gets data from the queue and uploads it
 def worker_function(data_queue, log_queue, results_queue):
     """Worker that takes object data from the queue and uploads it"""
+    s3_client = get_s3_client()
     while True:
         data = data_queue.get()
         if data is None:
@@ -348,7 +347,7 @@ def worker_function(data_queue, log_queue, results_queue):
             break
             
         # Upload the object
-        result = upload_object(data, log_queue)
+        result = upload_object(data, log_queue, s3_client, SIMPLE_CHECKSUM)
         results_queue.put(1)  # Signal a completion
 
 def main():
@@ -366,14 +365,17 @@ def main():
     log_thread_handle.start()
     
     # Generate a single data object for all uploads if simple_data is enabled
-    simple_content = None
+    global SIMPLE_CONTENT
+    global SIMPLE_CHECKSUM
     if USE_SIMPLE_DATA:
-        simple_content = generate_simple_data()
+        SIMPLE_CONTENT = generate_simple_data()
+        if CHECKSUM_ALGORITHM != "none":
+            SIMPLE_CHECKSUM = calculate_checksum(SIMPLE_CONTENT, CHECKSUM_ALGORITHM)
     
     # Start the data generator thread
     data_gen_thread = Thread(
         target=data_generator_thread, 
-        args=(data_queue, stop_event, simple_content), 
+        args=(data_queue, stop_event, SIMPLE_CONTENT),
         daemon=True
     )
     data_gen_thread.start()
